@@ -1,9 +1,12 @@
 from fastapi import FastAPI
 from fastapi.requests import Request
 from pydantic import BaseModel
-from .database import store_sensor_data
 
 app = FastAPI()
+@app.get("/")
+def read_root():
+    return {"Good Morning": "World"}
+
 
 @app.post("/sensordata")
 async def receive_sensor_data(request: Request):

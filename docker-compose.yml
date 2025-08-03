@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: "api"
+    volumes:
+      - ./api:/app
+    ports:
+      - 8000:8000
+    depends_on:
+      - kafka
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"  # Use service name
+    networks:
+      - kafka-net
+
+  producer:
+    build:
+      context: ./kafka
+    depends_on:
+      - kafka
+    command: python producer.py
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"  # Use service name
+    networks:
+      - kafka-net
+
+  consumer:
+    build:
+      context: ./kafka
+    depends_on:
+      - kafka
+    command: python consumer.py
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"  # Use service name
+    networks:
+      - kafka-net
+
+  kafka:
+    image: apache/kafka:latest
+    container_name: kafka
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092  # Changed from localhost
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093  # Changed from localhost
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    volumes:
+      - ./data:/var/lib/kafka/data
+    networks:
+      - kafka-net
+
+networks:
+  kafka-net:
+    driver: bridge
