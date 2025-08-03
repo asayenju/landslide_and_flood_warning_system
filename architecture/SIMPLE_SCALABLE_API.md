@@ -75,22 +75,22 @@ graph TB
 - Basic rate limiting
 ```
 
-### Day 4: Authentication & Security
+### Day 4: ML Model Integration
+```bash
+# What you'll build:
+- Simple XGBoost models for landslide/flood prediction
+- Feature engineering from sensor data
+- Model serving in FastAPI
+- Prediction caching with Redis
+```
+
+### Day 5: Authentication & Deployment
 ```bash
 # What you'll build:
 - API key authentication
-- Input validation
-- Basic security headers
-- Environment configuration
-```
-
-### Day 5: Testing & Deployment
-```bash
-# What you'll build:
 - Docker compose for local dev
-- Basic tests
 - Cloud deployment (single instance)
-- Load testing
+- Basic testing
 ```
 
 ## File Structure
@@ -102,10 +102,14 @@ landside_flood_warning_system/
 │   ├── database.py          # DB connection
 │   ├── cache.py             # Redis operations
 │   ├── kafka_client.py      # Kafka producer
+│   ├── ml_predictor.py      # ML models & predictions
 │   └── auth.py              # Simple authentication
 ├── consumer/
 │   ├── main.py              # Kafka consumer
 │   └── processors.py       # Message processing
+├── ml/
+│   ├── models/              # Trained model files
+│   └── train.py             # Model training script
 ├── docker-compose.yml       # All services
 └── requirements.txt         # Dependencies
 ```
@@ -117,20 +121,23 @@ landside_flood_warning_system/
 POST /api/v1/sensor-data     # Receive sensor data
 GET  /api/v1/alerts          # Get alerts
 GET  /api/v1/health          # Health check
-POST /api/v1/predictions     # Get ML predictions
+POST /api/v1/predictions     # Get ML predictions (NEW)
+GET  /api/v1/model-info      # Get model version info (NEW)
 ```
 
 ### Performance Features
 - **Async FastAPI** - Handle 1000+ concurrent requests
 - **Connection pooling** - Efficient database usage
-- **Redis caching** - Fast response times
+- **Redis caching** - Fast response times + ML prediction caching
 - **Kafka async** - Non-blocking message processing
+- **ML Models** - XGBoost for fast predictions (<50ms)
 
 ### Scalability Features
 - **Horizontal scaling** - Add more API instances
 - **Database indexing** - Fast queries
-- **Caching strategy** - Reduce database load
-- **Background processing** - Kafka consumers
+- **Caching strategy** - Reduce database load + cache ML predictions
+- **Background processing** - Kafka consumers + async ML inference
+- **Model serving** - In-memory models for fast predictions
 
 ## Simple Deployment Options
 
@@ -177,6 +184,11 @@ asyncpg==0.29.0
 redis==5.0.1
 kafka-python==2.0.2
 pydantic==2.5.0
+xgboost==2.0.3
+scikit-learn==1.3.2
+numpy==1.24.3
+pandas==2.0.3
+joblib==1.3.2
 ```
 
 ## Performance Targets (Realistic)
@@ -202,7 +214,8 @@ pydantic==2.5.0
 ❌ **Complex CI/CD** - Simple deployment scripts
 ❌ **Multiple databases** - PostgreSQL handles everything
 ❌ **Advanced caching** - Redis with simple TTL
-❌ **Load testing tools** - Use simple tools like `ab` or `wrk`
+❌ **Complex ML pipelines** - Simple XGBoost models only
+❌ **Model versioning** - Basic file-based model storage
 
 ## Success Criteria
 
@@ -211,6 +224,7 @@ pydantic==2.5.0
 - [ ] Kafka processes messages reliably
 - [ ] Database queries under 50ms
 - [ ] Redis caching works
+- [ ] ML models predict landslide/flood risk
 - [ ] Docker deployment works
 - [ ] Basic authentication implemented
 
@@ -219,6 +233,7 @@ pydantic==2.5.0
 - [ ] Error handling implemented
 - [ ] Basic logging added
 - [ ] Health checks working
+- [ ] ML models trained and loaded
 - [ ] Database migrations ready
 - [ ] Documentation written
 
@@ -233,12 +248,84 @@ pydantic==2.5.0
 - **Cloud Option**: $10-50/month (within free tiers initially)
 - **Scaling**: Add instances as needed
 
+## ML Model Integration (Simple Approach)
+
+### Quick ML Setup
+```python
+# api/ml_predictor.py - Simple but effective
+import xgboost as xgb
+import joblib
+import numpy as np
+
+class SimpleMLPredictor:
+    def __init__(self):
+        self.landslide_model = joblib.load('ml/models/landslide.pkl')
+        self.flood_model = joblib.load('ml/models/flood.pkl')
+    
+    def predict(self, sensor_data):
+        # Simple feature extraction
+        features = [
+            sensor_data.rainfall,
+            sensor_data.soil_moisture,
+            sensor_data.ground_movement,
+            sensor_data.water_level
+        ]
+        
+        landslide_prob = self.landslide_model.predict_proba([features])[0][1]
+        flood_prob = self.flood_model.predict_proba([features])[0][1]
+        
+        return {
+            "landslide": {"probability": landslide_prob, "risk": self.get_risk(landslide_prob)},
+            "flood": {"probability": flood_prob, "risk": self.get_risk(flood_prob)}
+        }
+    
+    def get_risk(self, prob):
+        if prob > 0.7: return "high"
+        elif prob > 0.4: return "medium"
+        else: return "low"
+```
+
+### Training Data (Start Simple)
+```python
+# ml/train.py - Generate synthetic data for initial model
+import pandas as pd
+import numpy as np
+from xgboost import XGBClassifier
+
+# Generate 10k samples of realistic sensor data
+def create_training_data():
+    data = []
+    for i in range(10000):
+        rainfall = np.random.exponential(10)
+        soil_moisture = np.random.beta(2, 5)
+        ground_movement = np.random.exponential(0.1)
+        water_level = np.random.exponential(2)
+        
+        # Simple risk calculation
+        landslide_risk = (rainfall > 50) * 0.4 + (soil_moisture > 0.8) * 0.3 + (ground_movement > 0.5) * 0.3
+        landslide = 1 if landslide_risk > 0.6 else 0
+        
+        data.append([rainfall, soil_moisture, ground_movement, water_level, landslide])
+    
+    return pd.DataFrame(data, columns=['rainfall', 'soil_moisture', 'ground_movement', 'water_level', 'landslide'])
+
+# Train and save model
+df = create_training_data()
+X = df[['rainfall', 'soil_moisture', 'ground_movement', 'water_level']]
+y = df['landslide']
+
+model = XGBClassifier(n_estimators=100, max_depth=6)
+model.fit(X, y)
+joblib.dump(model, 'ml/models/landslide.pkl')
+```
+
 ## Next Steps
 
 1. **Start with existing code** - Build on what you have
-2. **Focus on core features** - Sensor data + alerts
-3. **Test early and often** - Make sure it works
-4. **Deploy simple first** - Single instance, then scale
-5. **Document as you go** - API docs and setup guide
+2. **Add simple ML models** - XGBoost with basic features
+3. **Focus on core features** - Sensor data + ML predictions + alerts
+4. **Test early and often** - Make sure predictions make sense
+5. **Deploy simple first** - Single instance, then scale
+6. **Collect real data** - Improve models over time
 
-This approach gives you a production-ready, scalable API without the complexity. You can always add more features later as your needs grow.
+This approach gives you a production-ready, scalable API with ML capabilities without the complexity. You can always improve the models later as you collect more real data.
