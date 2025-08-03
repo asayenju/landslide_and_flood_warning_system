@@ -1,8 +1,14 @@
-FROM python:3.9-slim
+FROM python:3.11-slim
 
-WORKDIR /app  # Must match compose volume mount
-COPY . .
+WORKDIR /app
 
+# Install dependencies
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-CMD ["python", "main.py"]  # Adjust as needed
+# Copy app (optional if you mount via volume)
+COPY . .
+
+EXPOSE 8000
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
