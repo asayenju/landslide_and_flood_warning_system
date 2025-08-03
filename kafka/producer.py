@@ -1,24 +1,46 @@
 from kafka import KafkaProducer
 import json
 import time
+import logging
 
-# Create a KafkaProducer instance
-# bootstrap_servers specifies the Kafka broker(s) to connect to
-producer = KafkaProducer(
-    bootstrap_servers=['kafka:9092'],
-    # Value serializer to convert Python objects to bytes before sending
-    value_serializer=lambda v: json.dumps(v).encode('utf-8')
-)
+# Configure logging to see potential errors
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger('kafka-producer')
 
-topic_name = 'sensor.raw'
+def create_producer():
+    try:
+        producer = KafkaProducer(
+            bootstrap_servers=['kafka:9092'],  # Using Docker service name
+            value_serializer=lambda v: json.dumps(v).encode('utf-8'),
+            acks='all',  # Wait for all replicas to acknowledge
+            retries=3,    # Retry on failures
+            request_timeout_ms=10000  # Increase timeout
+        )
+        logger.info("Successfully connected to Kafka")
+        return producer
+    except Exception as e:
+        logger.error(f"Failed to create producer: {e}")
+        raise
 
-# Send messages
-for i in range(5):
-    message = {'id': i, 'message': f'Hello Kafka from Python! - {i}'}
-    producer.send(topic_name, value=message)
-    print(f"Sent: {message}")
-    time.sleep(1)
+def send_messages(producer, topic):
+    for i in range(5):
+        try:
+            message = {'id': i, 'timestamp': time.time(), 'data': f'Sample message {i}'}
+            future = producer.send(topic, value=message)
+            
+            # Optional: Get delivery confirmation
+            metadata = future.get(timeout=10)
+            logger.info(f"Sent message to {metadata.topic}[{metadata.partition}] at offset {metadata.offset}")
+            
+            time.sleep(1)
+        except Exception as e:
+            logger.error(f"Failed to send message {i}: {e}")
 
-# Flush any buffered messages to ensure they are sent
-producer.flush()
-print("Producer finished sending messages.")
+if __name__ == "__main__":
+    try:
+        producer = create_producer()
+        send_messages(producer, 'sensor.raw')
+    finally:
+        producer.flush()  # Ensure all messages are sent
+        producer.close()  # Cleanup
+        logger.info("Producer shutdown complete")

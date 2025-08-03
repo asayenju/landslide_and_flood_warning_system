@@ -18,50 +18,51 @@ services:
       - kafka-net
 
   producer:
-    build:
-      context: ./kafka
+    image: python:3.9-slim  # Python base image
+    volumes:
+      - ./kafka:/app  # Mount your producer code
+    working_dir: /app
+    command: python producer.py  # Now Python exists!
     depends_on:
       - kafka
-    command: python producer.py
-    environment:
-      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"  # Use service name
-    networks:
-      - kafka-net
 
   consumer:
-    build:
-      context: ./kafka
+    image: python:3.9-slim  # Same for consumer
+    volumes:
+      - ./kafka:/app
+    working_dir: /app
+    command: python consumer.py
     depends_on:
       - kafka
-    command: python consumer.py
-    environment:
-      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"  # Use service name
-    networks:
-      - kafka-net
 
   kafka:
-    image: apache/kafka:latest
+    image: confluentinc/cp-kafka:latest
+    hostname: kafka
     container_name: kafka
     ports:
       - "9092:9092"
       - "9093:9093"
     environment:
-      KAFKA_NODE_ID: 1
-      KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092  # Changed from localhost
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093  # Changed from localhost
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_KRAFT_MODE: "true"  # Enables KRaft mode.
+      KAFKA_PROCESS_ROLES: controller,broker  # Kafka acts as both controller and broker.
+      KAFKA_NODE_ID: 1  # Unique ID for the Kafka instance.
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@localhost:9093"  # Controller quorum.
+      KAFKA_LISTENERS: PLAINTEXT://localhost:9092,CONTROLLER://localhost:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LOG_DIRS: /var/lib/kafka/data
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_LOG_DIRS: /var/lib/kafka/data  # Log storage location.
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"  # Enables automatic topic creation.
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1  # Single replica for simplicity.
+      KAFKA_LOG_RETENTION_HOURS: 168  # Log retention period (7 days).
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0  # No rebalance delay.
+      CLUSTER_ID: "5L6g3nShT-eMCtK--X86sw"  # Unique Kafka cluster ID.
     volumes:
-      - ./data:/var/lib/kafka/data
-    networks:
-      - kafka-net
+      - kafka_data:/var/lib/kafka/data  # Let Docker manage permissions
 
+volumes:
+  kafka_data:  # No host permission conflicts
 networks:
   kafka-net:
     driver: bridge
