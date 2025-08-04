@@ -34,40 +34,37 @@ GET /health
 }
 ```
 
-### 2. Submit Sensor Data
+### 2. Analyze Satellite Image
 ```http
-POST /sensor-data
-Content-Type: application/json
+POST /analyze-image
+Content-Type: multipart/form-data
 X-API-Key: your-api-key
 ```
 
-**Request Body:**
-```json
-{
-  "sensor_id": "SENSOR_001",
-  "location": {
-    "latitude": 27.7172,
-    "longitude": 85.3240,
-    "altitude": 1400
-  },
-  "measurements": {
-    "rainfall": 25.5,
-    "soil_moisture": 0.65,
-    "ground_movement": 0.02,
-    "water_level": 1.2,
-    "temperature": 22.5,
-    "humidity": 78.0
-  },
-  "timestamp": "2025-08-03T18:20:00Z"
-}
+**Request Body (Form Data):**
+```
+image: [satellite_image.jpg] (file upload)
+location_lat: 27.7172 (optional)
+location_lng: 85.3240 (optional)
+area_name: "Kathmandu Valley" (optional)
 ```
 
 **Response (Success):**
 ```json
 {
-  "message": "Sensor data received successfully",
-  "data_id": "uuid-12345",
-  "processed": true,
+  "analysis_id": "uuid-12345",
+  "landslide_detected": true,
+  "confidence": 0.87,
+  "risk_level": "high",
+  "detections": [
+    {
+      "bbox": [120, 80, 340, 220],
+      "confidence": 0.87,
+      "class": "landslide",
+      "area_affected": 48400
+    }
+  ],
+  "processing_time_ms": 156,
   "timestamp": "2025-08-03T18:21:00Z"
 }
 ```
@@ -75,8 +72,8 @@ X-API-Key: your-api-key
 **Response (Error):**
 ```json
 {
-  "error": "Invalid sensor data",
-  "details": "rainfall value must be between 0 and 1000",
+  "error": "Invalid image format",
+  "details": "Only JPEG, PNG formats supported",
   "timestamp": "2025-08-03T18:21:00Z"
 }
 ```
@@ -119,116 +116,101 @@ X-API-Key: your-api-key
 }
 ```
 
-### 4. Get Predictions
+### 4. Batch Image Analysis
 ```http
-POST /predictions
-Content-Type: application/json
+POST /batch-analyze
+Content-Type: multipart/form-data
 X-API-Key: your-api-key
 ```
 
-**Request Body:**
-```json
-{
-  "sensor_data": {
-    "sensor_id": "SENSOR_001",
-    "measurements": {
-      "rainfall": 25.5,
-      "soil_moisture": 0.65,
-      "ground_movement": 0.02,
-      "water_level": 1.2
-    }
-  },
-  "prediction_type": ["landslide", "flood"]
-}
+**Request Body (Form Data):**
+```
+images: [image1.jpg, image2.jpg, image3.jpg] (multiple file uploads)
+location_data: [{"lat": 27.7172, "lng": 85.3240}, {...}] (JSON array, optional)
 ```
 
 **Response:**
 ```json
 {
-  "predictions": {
-    "landslide": {
-      "probability": 0.75,
-      "confidence": 0.92,
-      "risk_level": "high"
-    },
-    "flood": {
-      "probability": 0.45,
-      "confidence": 0.88,
-      "risk_level": "medium"
-    }
-  },
-  "timestamp": "2025-08-03T18:21:00Z",
-  "model_version": "v1.2.0"
-}
-```
-
-### 5. Get Sensor Status
-```http
-GET /sensors/{sensor_id}/status
-X-API-Key: your-api-key
-```
-
-**Response:**
-```json
-{
-  "sensor_id": "SENSOR_001",
-  "status": "active",
-  "last_reading": "2025-08-03T18:20:00Z",
-  "location": {
-    "latitude": 27.7172,
-    "longitude": 85.3240,
-    "area_name": "Kathmandu Valley"
-  },
-  "health": {
-    "battery_level": 85,
-    "signal_strength": 92,
-    "last_maintenance": "2025-08-01T10:00:00Z"
-  }
-}
-```
-
-### 6. Bulk Sensor Data
-```http
-POST /sensor-data/bulk
-Content-Type: application/json
-X-API-Key: your-api-key
-```
-
-**Request Body:**
-```json
-{
-  "readings": [
-    {
-      "sensor_id": "SENSOR_001",
-      "measurements": {...},
-      "timestamp": "2025-08-03T18:20:00Z"
-    },
-    {
-      "sensor_id": "SENSOR_002", 
-      "measurements": {...},
-      "timestamp": "2025-08-03T18:20:30Z"
-    }
-  ]
-}
-```
-
-**Response:**
-```json
-{
-  "processed": 2,
-  "failed": 0,
+  "batch_id": "batch-12345",
+  "total_images": 3,
   "results": [
     {
-      "sensor_id": "SENSOR_001",
-      "status": "success",
-      "data_id": "uuid-12345"
+      "image_name": "image1.jpg",
+      "landslide_detected": true,
+      "confidence": 0.87,
+      "risk_level": "high",
+      "detections": [...]
     },
     {
-      "sensor_id": "SENSOR_002",
-      "status": "success", 
-      "data_id": "uuid-12346"
+      "image_name": "image2.jpg",
+      "landslide_detected": false,
+      "confidence": 0.12,
+      "risk_level": "low",
+      "detections": []
     }
-  ]
+  ],
+  "processing_time_ms": 423,
+  "timestamp": "2025-08-03T18:21:00Z",
+  "model_version": "yolo-v8-landslide-v1.0"
+}
+```
+
+### 5. Get Analysis History
+```http
+GET /analysis-history?limit=50&offset=0&risk_level=high
+X-API-Key: your-api-key
+```
+
+**Query Parameters:**
+- `limit` (optional): Number of analyses to return (default: 50, max: 100)
+- `offset` (optional): Pagination offset (default: 0)
+- `risk_level` (optional): Filter by risk level (low, medium, high, critical)
+- `date_from` (optional): Filter from date (ISO 8601)
+- `date_to` (optional): Filter to date (ISO 8601)
+
+**Response:**
+```json
+{
+  "analyses": [
+    {
+      "analysis_id": "uuid-12345",
+      "landslide_detected": true,
+      "confidence": 0.87,
+      "risk_level": "high",
+      "location": {
+        "latitude": 27.7172,
+        "longitude": 85.3240,
+        "area_name": "Kathmandu Valley"
+      },
+      "detections_count": 2,
+      "created_at": "2025-08-03T18:20:00Z"
+    }
+  ],
+  "total": 1,
+  "limit": 50,
+  "offset": 0
+}
+```
+
+### 6. Get Model Information
+```http
+GET /model-info
+X-API-Key: your-api-key
+```
+
+**Response:**
+```json
+{
+  "model_name": "YOLOv8 Landslide Detector",
+  "version": "v1.0.0",
+  "accuracy": 0.89,
+  "training_date": "2025-08-01T00:00:00Z",
+  "classes": ["landslide"],
+  "input_size": [640, 640],
+  "supported_formats": ["jpg", "jpeg", "png", "tiff"],
+  "max_image_size_mb": 10,
+  "average_processing_time_ms": 150
 }
 ```
 

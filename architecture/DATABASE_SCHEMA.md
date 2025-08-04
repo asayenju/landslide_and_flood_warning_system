@@ -6,76 +6,76 @@ Simple, scalable PostgreSQL schema optimized for high-throughput sensor data ing
 
 ## Tables
 
-### 1. sensors
-Stores sensor metadata and configuration.
+### 1. image_analyses
+Stores satellite image analysis results.
 
 ```sql
-CREATE TABLE sensors (
-    id VARCHAR(50) PRIMARY KEY,
-    name VARCHAR(100) NOT NULL,
-    location_lat DECIMAL(10, 8) NOT NULL,
-    location_lng DECIMAL(11, 8) NOT NULL,
-    location_altitude INTEGER DEFAULT 0,
+CREATE TABLE image_analyses (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    image_filename VARCHAR(255) NOT NULL,
+    image_path VARCHAR(500),
+    image_size_bytes INTEGER,
+    location_lat DECIMAL(10, 8),
+    location_lng DECIMAL(11, 8),
     area_name VARCHAR(100),
-    sensor_type VARCHAR(50) NOT NULL DEFAULT 'multi',
-    status VARCHAR(20) NOT NULL DEFAULT 'active',
-    battery_level INTEGER DEFAULT 100,
-    signal_strength INTEGER DEFAULT 100,
-    last_maintenance TIMESTAMP,
+    landslide_detected BOOLEAN NOT NULL DEFAULT FALSE,
+    confidence DECIMAL(4, 3) NOT NULL,
+    risk_level VARCHAR(10) NOT NULL, -- 'low', 'medium', 'high', 'critical'
+    detections_count INTEGER DEFAULT 0,
+    processing_time_ms INTEGER,
+    model_version VARCHAR(50),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Indexes for performance
-CREATE INDEX idx_sensors_location ON sensors (location_lat, location_lng);
-CREATE INDEX idx_sensors_status ON sensors (status);
-CREATE INDEX idx_sensors_area ON sensors (area_name);
+CREATE INDEX idx_analyses_location ON image_analyses (location_lat, location_lng);
+CREATE INDEX idx_analyses_detected ON image_analyses (landslide_detected);
+CREATE INDEX idx_analyses_risk ON image_analyses (risk_level);
+CREATE INDEX idx_analyses_created ON image_analyses (created_at DESC);
+CREATE INDEX idx_analyses_confidence ON image_analyses (confidence DESC);
 ```
 
-### 2. sensor_readings
-Stores all sensor measurements (time-series data).
+### 2. landslide_detections
+Stores individual landslide detections within images.
 
 ```sql
-CREATE TABLE sensor_readings (
+CREATE TABLE landslide_detections (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    sensor_id VARCHAR(50) NOT NULL REFERENCES sensors(id),
-    rainfall DECIMAL(6, 2),
-    soil_moisture DECIMAL(4, 3),
-    ground_movement DECIMAL(6, 3),
-    water_level DECIMAL(6, 2),
-    temperature DECIMAL(5, 2),
-    humidity DECIMAL(5, 2),
-    reading_timestamp TIMESTAMP NOT NULL,
-    received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    processed BOOLEAN DEFAULT FALSE
+    analysis_id UUID NOT NULL REFERENCES image_analyses(id) ON DELETE CASCADE,
+    bbox_x1 INTEGER NOT NULL,
+    bbox_y1 INTEGER NOT NULL,
+    bbox_x2 INTEGER NOT NULL,
+    bbox_y2 INTEGER NOT NULL,
+    confidence DECIMAL(4, 3) NOT NULL,
+    area_affected INTEGER, -- calculated area in pixels
+    class_name VARCHAR(50) DEFAULT 'landslide',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Indexes for time-series queries
-CREATE INDEX idx_readings_sensor_time ON sensor_readings (sensor_id, reading_timestamp DESC);
-CREATE INDEX idx_readings_timestamp ON sensor_readings (reading_timestamp DESC);
-CREATE INDEX idx_readings_processed ON sensor_readings (processed) WHERE processed = FALSE;
-
--- Partition by month for better performance (optional)
--- CREATE TABLE sensor_readings_2025_08 PARTITION OF sensor_readings
--- FOR VALUES FROM ('2025-08-01') TO ('2025-09-01');
+-- Indexes for detection queries
+CREATE INDEX idx_detections_analysis ON landslide_detections (analysis_id);
+CREATE INDEX idx_detections_confidence ON landslide_detections (confidence DESC);
+CREATE INDEX idx_detections_area ON landslide_detections (area_affected DESC);
 ```
 
 ### 3. alerts
-Stores generated alerts and predictions.
+Stores generated alerts from image analysis.
 
 ```sql
 CREATE TABLE alerts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    sensor_id VARCHAR(50) NOT NULL REFERENCES sensors(id),
-    alert_type VARCHAR(20) NOT NULL, -- 'landslide', 'flood'
+    analysis_id UUID REFERENCES image_analyses(id),
+    alert_type VARCHAR(20) NOT NULL DEFAULT 'landslide',
     severity VARCHAR(10) NOT NULL,   -- 'low', 'medium', 'high', 'critical'
-    probability DECIMAL(4, 3) NOT NULL,
-    confidence DECIMAL(4, 3),
+    confidence DECIMAL(4, 3) NOT NULL,
     risk_level VARCHAR(10) NOT NULL,
     message TEXT,
-    location_lat DECIMAL(10, 8) NOT NULL,
-    location_lng DECIMAL(11, 8) NOT NULL,
+    location_lat DECIMAL(10, 8),
+    location_lng DECIMAL(11, 8),
     area_name VARCHAR(100),
+    detections_count INTEGER DEFAULT 0,
+    total_area_affected INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     expires_at TIMESTAMP,
     acknowledged BOOLEAN DEFAULT FALSE,
@@ -84,7 +84,7 @@ CREATE TABLE alerts (
 );
 
 -- Indexes for alert queries
-CREATE INDEX idx_alerts_sensor ON alerts (sensor_id);
+CREATE INDEX idx_alerts_analysis ON alerts (analysis_id);
 CREATE INDEX idx_alerts_type_severity ON alerts (alert_type, severity);
 CREATE INDEX idx_alerts_created ON alerts (created_at DESC);
 CREATE INDEX idx_alerts_location ON alerts (location_lat, location_lng);
@@ -113,7 +113,29 @@ CREATE INDEX idx_api_keys_hash ON api_keys (key_hash);
 CREATE INDEX idx_api_keys_active ON api_keys (is_active) WHERE is_active = TRUE;
 ```
 
-### 5. rate_limits
+### 5. batch_analyses
+Stores batch image analysis jobs.
+
+```sql
+CREATE TABLE batch_analyses (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    batch_name VARCHAR(255),
+    total_images INTEGER NOT NULL,
+    processed_images INTEGER DEFAULT 0,
+    failed_images INTEGER DEFAULT 0,
+    status VARCHAR(20) DEFAULT 'processing', -- 'processing', 'completed', 'failed'
+    started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMP,
+    processing_time_ms INTEGER,
+    created_by VARCHAR(100)
+);
+
+-- Indexes for batch queries
+CREATE INDEX idx_batch_status ON batch_analyses (status);
+CREATE INDEX idx_batch_created ON batch_analyses (started_at DESC);
+```
+
+### 6. rate_limits
 Tracks API usage for rate limiting.
 
 ```sql
@@ -131,7 +153,7 @@ CREATE INDEX idx_rate_limits_key_window ON rate_limits (api_key_hash, window_sta
 CREATE INDEX idx_rate_limits_cleanup ON rate_limits (window_end);
 ```
 
-### 6. system_metadata
+### 7. system_metadata
 Stores system configuration and metadata.
 
 ```sql
@@ -145,62 +167,58 @@ CREATE TABLE system_metadata (
 -- Insert default values
 INSERT INTO system_metadata (key, value, description) VALUES
 ('api_version', '1.0.0', 'Current API version'),
-('ml_model_version', 'v1.2.0', 'Current ML model version'),
+('yolo_model_version', 'v1.0.0', 'Current YOLO model version'),
 ('alert_retention_days', '30', 'Days to keep alerts'),
-('reading_retention_days', '365', 'Days to keep sensor readings');
+('analysis_retention_days', '365', 'Days to keep image analyses'),
+('max_image_size_mb', '10', 'Maximum image upload size'),
+('supported_formats', 'jpg,jpeg,png,tiff', 'Supported image formats');
 ```
 
 ## Views for Common Queries
 
-### Latest Sensor Readings
+### Recent High-Risk Analyses
 ```sql
-CREATE VIEW latest_sensor_readings AS
-SELECT DISTINCT ON (sensor_id) 
-    sensor_id,
-    rainfall,
-    soil_moisture,
-    ground_movement,
-    water_level,
-    temperature,
-    humidity,
-    reading_timestamp,
-    received_at
-FROM sensor_readings
-ORDER BY sensor_id, reading_timestamp DESC;
+CREATE VIEW recent_high_risk_analyses AS
+SELECT
+    ia.*,
+    COUNT(ld.id) as detection_count,
+    SUM(ld.area_affected) as total_area_affected
+FROM image_analyses ia
+LEFT JOIN landslide_detections ld ON ia.id = ld.analysis_id
+WHERE ia.risk_level IN ('high', 'critical')
+  AND ia.created_at > NOW() - INTERVAL '7 days'
+GROUP BY ia.id
+ORDER BY ia.created_at DESC;
 ```
 
 ### Active Alerts
 ```sql
 CREATE VIEW active_alerts AS
-SELECT 
+SELECT
     a.*,
-    s.name as sensor_name,
-    s.area_name
+    ia.image_filename,
+    ia.area_name
 FROM alerts a
-JOIN sensors s ON a.sensor_id = s.id
-WHERE a.expires_at > NOW() 
+JOIN image_analyses ia ON a.analysis_id = ia.id
+WHERE a.expires_at > NOW()
    OR a.expires_at IS NULL
 ORDER BY a.created_at DESC;
 ```
 
-### Sensor Health Status
+### Analysis Summary Stats
 ```sql
-CREATE VIEW sensor_health AS
-SELECT 
-    s.id,
-    s.name,
-    s.status,
-    s.battery_level,
-    s.signal_strength,
-    s.last_maintenance,
-    lr.reading_timestamp as last_reading,
-    CASE 
-        WHEN lr.reading_timestamp > NOW() - INTERVAL '1 hour' THEN 'online'
-        WHEN lr.reading_timestamp > NOW() - INTERVAL '24 hours' THEN 'delayed'
-        ELSE 'offline'
-    END as connectivity_status
-FROM sensors s
-LEFT JOIN latest_sensor_readings lr ON s.id = lr.sensor_id;
+CREATE VIEW analysis_summary_stats AS
+SELECT
+    DATE(created_at) as analysis_date,
+    COUNT(*) as total_analyses,
+    COUNT(*) FILTER (WHERE landslide_detected = true) as landslides_detected,
+    AVG(confidence) as avg_confidence,
+    COUNT(*) FILTER (WHERE risk_level = 'high') as high_risk_count,
+    COUNT(*) FILTER (WHERE risk_level = 'critical') as critical_risk_count
+FROM image_analyses
+WHERE created_at > NOW() - INTERVAL '30 days'
+GROUP BY DATE(created_at)
+ORDER BY analysis_date DESC;
 ```
 
 ## Database Configuration
@@ -219,25 +237,32 @@ ALTER SYSTEM SET default_statistics_target = 100;
 ### Maintenance Tasks
 ```sql
 -- Auto-vacuum settings for high-write tables
-ALTER TABLE sensor_readings SET (
+ALTER TABLE image_analyses SET (
     autovacuum_vacuum_scale_factor = 0.1,
     autovacuum_analyze_scale_factor = 0.05
 );
 
 -- Cleanup old data (run daily)
 DELETE FROM rate_limits WHERE window_end < NOW() - INTERVAL '1 day';
-DELETE FROM sensor_readings WHERE reading_timestamp < NOW() - INTERVAL '365 days';
+DELETE FROM image_analyses WHERE created_at < NOW() - INTERVAL '365 days';
 DELETE FROM alerts WHERE expires_at < NOW() - INTERVAL '30 days';
+DELETE FROM batch_analyses WHERE completed_at < NOW() - INTERVAL '90 days';
 ```
 
 ## Sample Data
 
-### Insert Sample Sensors
+### Insert Sample Data
 ```sql
-INSERT INTO sensors (id, name, location_lat, location_lng, area_name) VALUES
-('SENSOR_001', 'Kathmandu Valley Sensor 1', 27.7172, 85.3240, 'Kathmandu Valley'),
-('SENSOR_002', 'Pokhara Lake Sensor', 28.2096, 83.9856, 'Pokhara Valley'),
-('SENSOR_003', 'Chitwan Flood Sensor', 27.5291, 84.3542, 'Chitwan District');
+-- Sample image analysis
+INSERT INTO image_analyses (
+    image_filename, location_lat, location_lng, area_name,
+    landslide_detected, confidence, risk_level, detections_count,
+    processing_time_ms, model_version
+) VALUES
+('kathmandu_satellite_001.jpg', 27.7172, 85.3240, 'Kathmandu Valley',
+ true, 0.87, 'high', 2, 156, 'yolo-v8-landslide-v1.0'),
+('pokhara_satellite_002.jpg', 28.2096, 83.9856, 'Pokhara Valley',
+ false, 0.12, 'low', 0, 143, 'yolo-v8-landslide-v1.0');
 ```
 
 ### Insert Sample API Key
@@ -255,10 +280,11 @@ INSERT INTO api_keys (key_hash, name, tier, rate_limit) VALUES
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- Create all tables in order
-\i create_sensors.sql
-\i create_sensor_readings.sql
+\i create_image_analyses.sql
+\i create_landslide_detections.sql
 \i create_alerts.sql
 \i create_api_keys.sql
+\i create_batch_analyses.sql
 \i create_rate_limits.sql
 \i create_system_metadata.sql
 

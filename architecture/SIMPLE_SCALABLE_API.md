@@ -15,7 +15,7 @@ graph TB
         REDIS[Redis Cache]
     end
     
-    USERS[Users/Sensors] --> API
+    USERS[Users/Satellite] --> API
     API --> KAFKA
     API --> REDIS
     API --> DB
@@ -75,13 +75,13 @@ graph TB
 - Basic rate limiting
 ```
 
-### Day 4: ML Model Integration
+### Day 4: YOLO Satellite Image Analysis
 ```bash
 # What you'll build:
-- Simple XGBoost models for landslide/flood prediction
-- Feature engineering from sensor data
-- Model serving in FastAPI
-- Prediction caching with Redis
+- YOLOv8 model for landslide detection in satellite images
+- Image preprocessing and inference pipeline
+- Model serving in FastAPI with GPU support
+- Result caching with Redis
 ```
 
 ### Day 5: Authentication & Deployment
@@ -102,14 +102,15 @@ landside_flood_warning_system/
 │   ├── database.py          # DB connection
 │   ├── cache.py             # Redis operations
 │   ├── kafka_client.py      # Kafka producer
-│   ├── ml_predictor.py      # ML models & predictions
+│   ├── yolo_predictor.py    # YOLO model & image analysis
 │   └── auth.py              # Simple authentication
 ├── consumer/
 │   ├── main.py              # Kafka consumer
 │   └── processors.py       # Message processing
-├── ml/
-│   ├── models/              # Trained model files
-│   └── train.py             # Model training script
+├── yolo/
+│   ├── models/              # YOLO model files (.pt)
+│   ├── datasets/            # Training datasets
+│   └── train.py             # YOLO training script
 ├── docker-compose.yml       # All services
 └── requirements.txt         # Dependencies
 ```
@@ -118,11 +119,11 @@ landside_flood_warning_system/
 
 ### API Endpoints
 ```python
-POST /api/v1/sensor-data     # Receive sensor data
-GET  /api/v1/alerts          # Get alerts
+POST /api/v1/analyze-image   # Upload satellite image for analysis
+GET  /api/v1/alerts          # Get landslide alerts
 GET  /api/v1/health          # Health check
-POST /api/v1/predictions     # Get ML predictions (NEW)
-GET  /api/v1/model-info      # Get model version info (NEW)
+POST /api/v1/batch-analyze   # Batch image analysis (NEW)
+GET  /api/v1/model-info      # Get YOLO model info (NEW)
 ```
 
 ### Performance Features
@@ -130,14 +131,14 @@ GET  /api/v1/model-info      # Get model version info (NEW)
 - **Connection pooling** - Efficient database usage
 - **Redis caching** - Fast response times + ML prediction caching
 - **Kafka async** - Non-blocking message processing
-- **ML Models** - XGBoost for fast predictions (<50ms)
+- **YOLO Model** - YOLOv8 for satellite image analysis (<200ms per image)
 
 ### Scalability Features
 - **Horizontal scaling** - Add more API instances
 - **Database indexing** - Fast queries
-- **Caching strategy** - Reduce database load + cache ML predictions
-- **Background processing** - Kafka consumers + async ML inference
-- **Model serving** - In-memory models for fast predictions
+- **Caching strategy** - Reduce database load + cache image analysis results
+- **Background processing** - Kafka consumers + async image processing
+- **Model serving** - GPU-accelerated YOLO inference
 
 ## Simple Deployment Options
 
@@ -214,7 +215,7 @@ joblib==1.3.2
 ❌ **Complex CI/CD** - Simple deployment scripts
 ❌ **Multiple databases** - PostgreSQL handles everything
 ❌ **Advanced caching** - Redis with simple TTL
-❌ **Complex ML pipelines** - Simple XGBoost models only
+❌ **Complex ML pipelines** - Simple YOLO inference only
 ❌ **Model versioning** - Basic file-based model storage
 
 ## Success Criteria
@@ -224,7 +225,7 @@ joblib==1.3.2
 - [ ] Kafka processes messages reliably
 - [ ] Database queries under 50ms
 - [ ] Redis caching works
-- [ ] ML models predict landslide/flood risk
+- [ ] YOLO model detects landslides in satellite images
 - [ ] Docker deployment works
 - [ ] Basic authentication implemented
 
@@ -233,7 +234,7 @@ joblib==1.3.2
 - [ ] Error handling implemented
 - [ ] Basic logging added
 - [ ] Health checks working
-- [ ] ML models trained and loaded
+- [ ] YOLO model trained and loaded
 - [ ] Database migrations ready
 - [ ] Documentation written
 
@@ -248,75 +249,135 @@ joblib==1.3.2
 - **Cloud Option**: $10-50/month (within free tiers initially)
 - **Scaling**: Add instances as needed
 
-## ML Model Integration (Simple Approach)
+## YOLO Satellite Image Analysis (Simple Approach)
 
-### Quick ML Setup
+### Quick YOLO Setup
 ```python
-# api/ml_predictor.py - Simple but effective
-import xgboost as xgb
-import joblib
+# api/yolo_predictor.py - YOLO for landslide detection
+from ultralytics import YOLO
+import cv2
 import numpy as np
+from PIL import Image
 
-class SimpleMLPredictor:
+class YOLOLandslideDetector:
     def __init__(self):
-        self.landslide_model = joblib.load('ml/models/landslide.pkl')
-        self.flood_model = joblib.load('ml/models/flood.pkl')
-    
-    def predict(self, sensor_data):
-        # Simple feature extraction
-        features = [
-            sensor_data.rainfall,
-            sensor_data.soil_moisture,
-            sensor_data.ground_movement,
-            sensor_data.water_level
-        ]
+        # Load pre-trained YOLO model (fine-tuned for landslides)
+        self.model = YOLO('yolo/models/landslide_yolo.pt')
         
-        landslide_prob = self.landslide_model.predict_proba([features])[0][1]
-        flood_prob = self.flood_model.predict_proba([features])[0][1]
+    def analyze_image(self, image_path_or_bytes):
+        # Load and preprocess image
+        if isinstance(image_path_or_bytes, bytes):
+            image = Image.open(io.BytesIO(image_path_or_bytes))
+        else:
+            image = Image.open(image_path_or_bytes)
+        
+        # Run YOLO inference
+        results = self.model(image)
+        
+        # Process results
+        detections = []
+        for result in results:
+            boxes = result.boxes
+            if boxes is not None:
+                for box in boxes:
+                    detection = {
+                        "bbox": box.xyxy[0].tolist(),  # [x1, y1, x2, y2]
+                        "confidence": float(box.conf[0]),
+                        "class": "landslide",
+                        "area_affected": self.calculate_area(box.xyxy[0])
+                    }
+                    detections.append(detection)
         
         return {
-            "landslide": {"probability": landslide_prob, "risk": self.get_risk(landslide_prob)},
-            "flood": {"probability": flood_prob, "risk": self.get_risk(flood_prob)}
+            "landslide_detected": len(detections) > 0,
+            "confidence": max([d["confidence"] for d in detections]) if detections else 0,
+            "detections": detections,
+            "risk_level": self.get_risk_level(detections)
         }
     
-    def get_risk(self, prob):
-        if prob > 0.7: return "high"
-        elif prob > 0.4: return "medium"
-        else: return "low"
+    def get_risk_level(self, detections):
+        if not detections:
+            return "low"
+        
+        max_confidence = max([d["confidence"] for d in detections])
+        total_area = sum([d["area_affected"] for d in detections])
+        
+        if max_confidence > 0.8 and total_area > 1000:
+            return "critical"
+        elif max_confidence > 0.6:
+            return "high"
+        elif max_confidence > 0.4:
+            return "medium"
+        else:
+            return "low"
+    
+    def calculate_area(self, bbox):
+        # Calculate area of bounding box
+        x1, y1, x2, y2 = bbox
+        return (x2 - x1) * (y2 - y1)
 ```
 
-### Training Data (Start Simple)
+### Training Data (Use Existing Datasets)
 ```python
-# ml/train.py - Generate synthetic data for initial model
-import pandas as pd
-import numpy as np
-from xgboost import XGBClassifier
+# yolo/train.py - Train YOLO on landslide dataset
+from ultralytics import YOLO
+import os
 
-# Generate 10k samples of realistic sensor data
-def create_training_data():
-    data = []
-    for i in range(10000):
-        rainfall = np.random.exponential(10)
-        soil_moisture = np.random.beta(2, 5)
-        ground_movement = np.random.exponential(0.1)
-        water_level = np.random.exponential(2)
-        
-        # Simple risk calculation
-        landslide_risk = (rainfall > 50) * 0.4 + (soil_moisture > 0.8) * 0.3 + (ground_movement > 0.5) * 0.3
-        landslide = 1 if landslide_risk > 0.6 else 0
-        
-        data.append([rainfall, soil_moisture, ground_movement, water_level, landslide])
+def train_landslide_yolo():
+    # Use existing landslide datasets:
+    # 1. Landslide4Sense dataset
+    # 2. NASA Landslide Inventory
+    # 3. Custom satellite imagery with annotations
     
-    return pd.DataFrame(data, columns=['rainfall', 'soil_moisture', 'ground_movement', 'water_level', 'landslide'])
+    # Load base YOLOv8 model
+    model = YOLO('yolov8n.pt')  # nano version for speed
+    
+    # Train on landslide dataset
+    results = model.train(
+        data='datasets/landslide_dataset.yaml',  # Dataset config
+        epochs=100,
+        imgsz=640,
+        batch=16,
+        device='cuda' if torch.cuda.is_available() else 'cpu'
+    )
+    
+    # Save trained model
+    model.save('yolo/models/landslide_yolo.pt')
+    
+    return results
 
-# Train and save model
-df = create_training_data()
-X = df[['rainfall', 'soil_moisture', 'ground_movement', 'water_level']]
-y = df['landslide']
+# Dataset structure (YOLO format):
+# datasets/
+# ├── landslide_dataset.yaml
+# ├── train/
+# │   ├── images/
+# │   └── labels/
+# └── val/
+#     ├── images/
+#     └── labels/
+```
 
-model = XGBClassifier(n_estimators=100, max_depth=6)
-model.fit(X, y)
-joblib.dump(model, 'ml/models/landslide.pkl')
+### Available Datasets
+```python
+# Good landslide datasets for YOLO training:
+
+# 1. Landslide4Sense (Recommended)
+# - 3,799 image patches
+# - Sentinel-2 satellite imagery
+# - Pre-labeled landslide areas
+# - Download: https://www.iarai.ac.at/landslide4sense/
+
+# 2. NASA Global Landslide Catalog
+# - Historical landslide events with coordinates
+# - Can be used to find satellite imagery
+# - Download: https://data.nasa.gov/
+
+# 3. Custom Dataset Creation
+def create_custom_dataset():
+    # Use Google Earth Engine or Planet API
+    # to get satellite imagery of known landslide areas
+    # Then annotate using tools like LabelImg
+    pass
 ```
 
 ## Next Steps
